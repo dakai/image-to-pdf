@@ -1,0 +1,10 @@
+# TrueNAS SCALE (24.10+) Apps 用的 compose 文件
+# 部署：Apps → Docker Compose → 粘贴本文件内容
+# 这个应用完全在前端跑，图片只在浏览器内存里，不需要任何 storage/volume。
+services:
+  image-to-pdf:
+    image: ghcr.io/dakai/image-to-pdf:latest
+    restart: unless-stopped
+    ports:
+      # 左边是 NAS 上的端口，右边固定 3000；8888 冲突就换一个
+      - "8888:3000"
