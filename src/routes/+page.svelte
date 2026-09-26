@@ -14,6 +14,7 @@
   let error = $state("");
   let selected = $state<string | null>(null);
   let dragging = $state<string | null>(null);
+  let overPage = $state<string | null>(null);
 
   // 画布缩到 40% 时，12pt 的角只剩 5 个屏幕像素，手指按不到 —— 手柄按 1/z 反向放大
   const hs = $derived(Math.max(11, 26 / z));
@@ -117,8 +118,12 @@
   ) {
     e.stopPropagation();
     selected = it.id;
+    // 一次拖拽/缩放算一步撤销，别按 pointermove 次数记
+    doc.snapshot();
+    // 用户一摆就脱离自动排布，之后再加图不会把ta挪走
+    it.auto = false;
     const el = e.currentTarget as HTMLElement;
-    try { el.setPointerCapture(e.pointerId) } catch (err) { /* 同上 */ }
+    try { el.setPointerCapture(e.pointerId) } catch (err) { /* 指针已释放，忽略 */ }
     const rect = (el.closest(".sheet") as HTMLElement).getBoundingClientRect();
     const { w: pw, h: ph } = doc.sizeOf(page);
     const s0 = { x: it.x, y: it.y, w: it.w, h: it.h };
@@ -147,14 +152,28 @@
       it.x = sx < 0 ? ax - w2 : ax;
       it.y = sy < 0 ? ay - h2 : ay;
     };
-    const stop = () => {
+    // 移动时高亮手指下的画布；松手落在别的画布上就把图搬过去
+    const track = (ev: PointerEvent) => {
+      const sheet = document
+        .elementFromPoint(ev.clientX, ev.clientY)
+        ?.closest(".sheet") as HTMLElement | null;
+      const id = sheet?.dataset.page ?? null;
+      overPage = !corner && id && id !== page.id ? id : null;
+    };
+    const stop = (ev: PointerEvent) => {
       el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointermove", track);
       el.removeEventListener("pointerup", stop);
       el.removeEventListener("pointercancel", stop);
+      const to = overPage;
+      overPage = null;
+      if (to && !corner) doc.moveItemToPage(page.id, it.id, to);
+      else if (!corner && ev.type === "pointercancel") doc.undo();
     };
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerup", stop);
     el.addEventListener("pointercancel", stop);
+    el.addEventListener("pointermove", track);
   }
 
   async function load(files: FileList | File[] | null, pageId?: string) {
@@ -162,8 +181,8 @@
     busy = true;
     error = "";
     try {
-      if (pageId) await doc.addTo(pageId, files);
-      else await doc.add([...files]);
+      if (pageId) await doc.addTo(pageId, Array.from(files));
+      else await doc.add(Array.from(files));
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -174,7 +193,7 @@
   }
 
   async function onExport() {
-    if (!doc.count) return;
+    if (!doc.hasItems) return;
     busy = true;
     error = "";
     try {
@@ -203,9 +222,18 @@
     doc.movePage(i, e.clientY - r.top < r.height / 2 ? i : i + 1);
   }
 
+  function onKey(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "z") return;
+    e.preventDefault();
+    if (e.shiftKey) doc.redo();
+    else doc.undo();
+  }
+
   onMount(fit);
   onDestroy(() => doc.clear());
 </script>
+
+<svelte:window onkeydown={onKey} />
 
 <header>
   <strong>图片 → PDF</strong>
@@ -225,14 +253,24 @@
     title="新图片是排到最后一页，还是每张各占一页"
   >
     <option value={false}>每张一页</option>
-    <option value={true}>排到末页</option>
+    <option value={true}>排到同一页</option>
   </select>
+  <button
+    title="撤销 (Ctrl+Z)"
+    disabled={!doc.canUndo}
+    onclick={() => doc.undo()}>↶</button
+  >
+  <button
+    title="重做 (Ctrl+Shift+Z)"
+    disabled={!doc.canRedo}
+    onclick={() => doc.redo()}>↷</button
+  >
   <button onclick={() => picker?.click()}>＋ 图片</button>
   <button onclick={() => doc.addBlank()}>＋ 空白页</button>
   {#if doc.count}
     <button class="danger" onclick={() => doc.clear()}>清空</button>
   {/if}
-  <button class="primary" onclick={onExport} disabled={busy || !doc.count}>
+  <button class="primary" onclick={onExport} disabled={busy || !doc.hasItems}>
     导出 PDF
   </button>
 </header>
@@ -290,6 +328,8 @@
           </div>
           <div
             class="sheet"
+            class:drop={overPage === p.id}
+            data-page={p.id}
             role="group"
             aria-label="第 {i + 1} 页画布"
             style="width:{box.w}px;height:{box.h}px"
@@ -330,17 +370,12 @@
               </div>
             {/each}
             {#if !p.items.length}
-              <div class="hint">空页 · 把图片拖到这里</div>
+              <div class="hint">空画布 · 点上方「＋图片」，或把图片拖到这里</div>
             {/if}
           </div>
         </div>
       {/each}
     </div>
-  {:else}
-    <button class="empty" onclick={() => picker?.click()}>
-      <span>＋</span>
-      点击选择图片<br /><small>也可把图片拖到这里</small>
-    </button>
   {/if}
 </main>
 
@@ -380,7 +415,7 @@
   header {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 6px;
     align-items: center;
     padding: 10px 12px;
     padding-top: max(10px, env(safe-area-inset-top));
@@ -390,6 +425,23 @@
 
   header strong {
     margin-right: auto;
+  }
+
+  /* 窄屏：控件本来就多，再松散就要占掉三行 */
+  @media (max-width: 520px) {
+    header {
+      gap: 4px;
+      padding: 8px;
+      padding-top: max(8px, env(safe-area-inset-top));
+    }
+    header button,
+    header select {
+      padding: 6px 8px;
+      font-size: 13px;
+    }
+    header strong {
+      font-size: 14px;
+    }
   }
 
   .count {
@@ -469,6 +521,11 @@
     overflow: hidden;
   }
 
+  .sheet.drop {
+    outline: 3px solid var(--accent);
+    outline-offset: 3px;
+  }
+
   .sheet img {
     width: 100%;
     height: 100%;
@@ -545,27 +602,6 @@
     font-size: 12px;
     background: #000c;
     border-color: #fff4;
-  }
-
-  .empty {
-    position: absolute;
-    inset: 0;
-    margin: auto;
-    height: max-content;
-    padding: 32px 44px;
-    background: none;
-    border: 2px dashed var(--line);
-    color: var(--dim);
-    font-size: 17px;
-    line-height: 1.8;
-  }
-
-  .empty span {
-    font-size: 30px;
-  }
-
-  .empty small {
-    font-size: 13px;
   }
 
   .zoom {
