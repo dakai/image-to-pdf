@@ -1,19 +1,18 @@
 import { PDFDocument } from 'pdf-lib'
-import { fit, sheet, type PaperKey } from './layout'
+import { sheet, type PaperKey } from './layout'
 import type { Page } from './doc.svelte'
 
 export async function buildPdf(pages: Page[], paper: PaperKey): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   for (const p of pages) {
-    const box = sheet(p.w > p.h, paper)
-    const page = doc.addPage([box.w, box.h])
-    if (!p.blob) continue
-    const bytes = new Uint8Array(await p.blob.arrayBuffer())
-    const img =
-      p.type === 'image/png' ? await doc.embedPng(bytes) : await doc.embedJpg(bytes)
-    const r = fit(box, { w: img.width, h: img.height })
-    // pdf 原点在左下角，y 相对页面底边
-    page.drawImage(img, { x: r.x, y: box.h - r.y - r.h, width: r.w, height: r.h })
+    const { w, h } = sheet(p.landscape, paper)
+    const page = doc.addPage([w, h])
+    for (const it of p.items) {
+      const bytes = new Uint8Array(await it.blob.arrayBuffer())
+      const img = it.type === 'image/png' ? await doc.embedPng(bytes) : await doc.embedJpg(bytes)
+      // 预览用 CSS 记的是「距页面左上角」，PDF 原点在左下角，所以 y 要翻过来
+      page.drawImage(img, { x: it.x, y: h - it.y - it.h, width: it.w, height: it.h })
+    }
   }
   return doc.save()
 }
