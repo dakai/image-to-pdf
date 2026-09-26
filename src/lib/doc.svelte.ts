@@ -15,6 +15,11 @@ export type Page = {
 // 长边超过 2480px (~A4 300dpi) 就先缩，避免手机原图把内存和 PDF 撑爆。
 const MAX_EDGE = 2480
 
+// crypto.randomUUID() 只在 secure context 存在，局域网 http://192.168.x.x 下是
+// undefined。页面数据本来就活在内存里，自增序号足够唯一。
+let seq = 0
+const newId = () => `p${seq++}`
+
 class Doc {
   pages = $state<Page[]>([])
   paper = $state<PaperKey>('a4')
@@ -32,7 +37,7 @@ class Doc {
 
   addBlank() {
     this.pages.push({
-      id: crypto.randomUUID(),
+      id: newId(),
       src: null,
       blob: null,
       w: 0,
@@ -73,7 +78,7 @@ async function prepare(file: File): Promise<Page> {
     const scale = Math.min(1, MAX_EDGE / Math.max(w, h))
     if (scale === 1) {
       return {
-        id: crypto.randomUUID(),
+        id: newId(),
         src,
         blob: file,
         w,
@@ -93,7 +98,7 @@ async function prepare(file: File): Promise<Page> {
     URL.revokeObjectURL(src)
     const out = URL.createObjectURL(blob)
     return {
-      id: crypto.randomUUID(),
+      id: newId(),
       src: out,
       blob,
       w: canvas.width,
