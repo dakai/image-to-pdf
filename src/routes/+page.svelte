@@ -322,7 +322,10 @@
             >
               {p.landscape ? "竖" : "横"}
             </button>
-            <button title="删除这一页" onclick={() => doc.removePage(p.id)}
+            <button
+              title="删除这一页"
+              disabled={doc.count === 1}
+              onclick={() => doc.removePage(p.id)}
               >✕</button
             >
           </div>
