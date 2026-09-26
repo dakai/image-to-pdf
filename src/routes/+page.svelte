@@ -101,10 +101,11 @@
     error = "";
     try {
       await doc.add([...files]);
-      fit();
     } catch (e) {
-      error = `有图片无法读取：${e instanceof Error ? e.message : e}`;
+      error = e instanceof Error ? e.message : String(e);
     } finally {
+      // 部分失败时前面的图已经加进来了，缩放也要跟上
+      if (doc.count) fit();
       busy = false;
     }
   }
@@ -248,7 +249,7 @@
 <input
   bind:this={picker}
   type="file"
-  accept="image/*"
+  accept="image/*,image/jpeg"
   multiple
   hidden
   onchange={(e) => {
